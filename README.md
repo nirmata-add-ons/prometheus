@@ -1,4 +1,4 @@
-# prometheus as a Nirmata add-on service
+# Prometheus as a Nirmata add-on service
 
 This README provides steps to install Prometheus for Kubernetes cluster as Nirmata add-on.
 
