@@ -1,0 +1,1203 @@
+---
+metadata:
+  name: "node-exporter"
+  labels:
+    k8s-app: "node-exporter"
+apiVersion: "monitoring.coreos.com/v1"
+kind: "ServiceMonitor"
+spec:
+  endpoints:
+  - bearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    interval: "30s"
+    port: "https"
+    scheme: "https"
+    tlsConfig:
+      insecureSkipVerify: true
+  jobLabel: "k8s-app"
+  selector:
+    matchLabels:
+      k8s-app: "node-exporter"
+  namespaceSelector:
+    matchNames:
+    - "nirmata-monitoring"
+
+---
+apiVersion: "apps/v1"
+kind: "DaemonSet"
+metadata:
+  annotations: {}
+  name: "node-exporter"
+  labels:
+    app: "node-exporter"
+    nirmata.io/daemonset.name: "node-exporter"
+    nirmata.io/component: "node-exporter"
+spec:
+  minReadySeconds: 0
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: "node-exporter"
+      nirmata.io/component: "node-exporter"
+    matchExpressions: []
+  template:
+    metadata:
+      annotations: {}
+      labels:
+        app: "node-exporter"
+        nirmata.io/daemonset.name: "node-exporter"
+        nirmata.io/component: "node-exporter"
+    spec:
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        beta.kubernetes.io/os: "linux"
+      serviceAccountName: "node-exporter"
+      hostNetwork: true
+      hostPID: true
+      volumes:
+      - name: "proc"
+        hostPath:
+          path: "/proc"
+      - name: "sys"
+        hostPath:
+          path: "/sys"
+      - name: "root"
+        hostPath:
+          path: "/"
+      containers:
+      - name: "node-exporter"
+        image: "quay.io/prometheus/node-exporter:v0.17.0"
+        command: []
+        args:
+        - "--web.listen-address=127.0.0.1:9101"
+        - "--path.procfs=/host/proc"
+        - "--path.sysfs=/host/sys"
+        - "--path.rootfs=/host/root"
+        - "--collector.filesystem.ignored-mount-points=^/(dev|proc|sys|var/lib/docker/.+)($|/)"
+        - "--collector.filesystem.ignored-fs-types=^(autofs|binfmt_misc|cgroup|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|mqueue|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|sysfs|tracefs)$"
+        volumeMounts:
+        - name: "proc"
+          readOnly: false
+          mountPath: "/host/proc"
+        - name: "sys"
+          readOnly: false
+          mountPath: "/host/sys"
+        - mountPropagation: "HostToContainer"
+          name: "root"
+          readOnly: true
+          mountPath: "/host/root"
+        resources:
+          limits:
+            cpu: "250m"
+            memory: "180Mi"
+          requests:
+            cpu: "102m"
+            memory: "180Mi"
+      - name: "kube-rbac-proxy"
+        image: "quay.io/coreos/kube-rbac-proxy:v0.4.1"
+        command: []
+        args:
+        - "--logtostderr"
+        - "--secure-listen-address=$(IP):9100"
+        - "--tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_RSA_WITH_AES_128_CBC_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256"
+        - "--upstream=http://127.0.0.1:9101/"
+        ports:
+        - name: "https"
+          hostPort: 9100
+          containerPort: 9100
+          protocol: "TCP"
+        env:
+        - name: "IP"
+          valueFrom:
+            fieldRef:
+              apiVersion: "v1"
+              fieldPath: "status.podIP"
+        resources:
+          limits:
+            cpu: "20m"
+            memory: "40Mi"
+          requests:
+            cpu: "10m"
+            memory: "20Mi"
+      securityContext:
+        runAsUser: 65534
+        runAsNonRoot: true
+        supplementalGroups: []
+      tolerations:
+      - key: "node-role.kubernetes.io/master"
+        effect: "NoSchedule"
+  updateStrategy:
+    type: "RollingUpdate"
+    rollingUpdate:
+      maxUnavailable: 1
+
+---
+apiVersion: "v1"
+kind: "Service"
+metadata:
+  annotations: {}
+  name: "node-exporter"
+  labels:
+    nirmata.io/service.name: "node-exporter"
+    k8s-app: "node-exporter"
+    nirmata.io/component: "node-exporter"
+spec:
+  clusterIP: "None"
+  externalIPs: []
+  loadBalancerSourceRanges: []
+  type: "ClusterIP"
+  selector:
+    app: "node-exporter"
+    nirmata.io/component: "node-exporter"
+  ports:
+  - name: "https"
+    port: 9100
+    targetPort: "https"
+
+---
+kind: "Deployment"
+apiVersion: "apps/v1"
+metadata:
+  annotations: {}
+  name: "kube-state-metrics"
+  labels:
+    nirmata.io/deployment.name: "kube-state-metrics"
+    nirmata.io/component: "kube-state-metrics"
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      k8s-app: "kube-state-metrics"
+      nirmata.io/component: "kube-state-metrics"
+    matchExpressions: []
+  strategy:
+    type: "RollingUpdate"
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      annotations: {}
+      labels:
+        nirmata.io/deployment.name: "kube-state-metrics"
+        k8s-app: "kube-state-metrics"
+        nirmata.io/component: "kube-state-metrics"
+    spec:
+      terminationGracePeriodSeconds: 30
+      nodeSelector: {}
+      serviceAccountName: "kube-state-metrics"
+      containers:
+      - name: "kube-state-metrics"
+        image: "quay.io/coreos/kube-state-metrics:v1.5.0"
+        command: []
+        args: []
+        ports:
+        - name: "http-metrics"
+          containerPort: 8080
+          protocol: "TCP"
+        - name: "telemetry"
+          containerPort: 8081
+          protocol: "TCP"
+        readinessProbe:
+          initialDelaySeconds: 5
+          timeoutSeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+          httpGet:
+            path: "/healthz"
+            port: 8080
+      - name: "addon-resizer"
+        image: "k8s.gcr.io/addon-resizer:1.8.3"
+        command:
+        - "/pod_nanny"
+        - "--container=kube-state-metrics"
+        - "--cpu=100m"
+        - "--extra-cpu=1m"
+        - "--memory=100Mi"
+        - "--extra-memory=2Mi"
+        - "--threshold=5"
+        - "--deployment=kube-state-metrics"
+        args: []
+        env:
+        - name: "MY_POD_NAME"
+          valueFrom:
+            fieldRef:
+              apiVersion: "v1"
+              fieldPath: "metadata.name"
+        - name: "MY_POD_NAMESPACE"
+          valueFrom:
+            fieldRef:
+              apiVersion: "v1"
+              fieldPath: "metadata.namespace"
+        resources:
+          limits:
+            cpu: "150m"
+            memory: "50Mi"
+          requests:
+            cpu: "150m"
+            memory: "50Mi"
+
+---
+metadata:
+  name: "kube-state-metrics"
+  labels: {}
+apiVersion: "rbac.authorization.k8s.io/v1"
+kind: "ClusterRole"
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - "configmaps"
+  - "secrets"
+  - "nodes"
+  - "pods"
+  - "services"
+  - "resourcequotas"
+  - "replicationcontrollers"
+  - "limitranges"
+  - "persistentvolumeclaims"
+  - "persistentvolumes"
+  - "namespaces"
+  - "endpoints"
+  verbs:
+  - "list"
+  - "watch"
+- apiGroups:
+  - "extensions"
+  resources:
+  - "daemonsets"
+  - "deployments"
+  - "replicasets"
+  - "ingresses"
+  verbs:
+  - "list"
+  - "watch"
+- apiGroups:
+  - "apps"
+  resources:
+  - "daemonsets"
+  - "deployments"
+  - "replicasets"
+  - "statefulsets"
+  verbs:
+  - "list"
+  - "watch"
+- apiGroups:
+  - "batch"
+  resources:
+  - "cronjobs"
+  - "jobs"
+  verbs:
+  - "list"
+  - "watch"
+- apiGroups:
+  - "autoscaling"
+  resources:
+  - "horizontalpodautoscalers"
+  verbs:
+  - "list"
+  - "watch"
+- apiGroups:
+  - "policy"
+  resources:
+  - "poddisruptionbudgets"
+  verbs:
+  - "list"
+  - "watch"
+
+---
+metadata:
+  name: "prometheus"
+  labels: {}
+apiVersion: "rbac.authorization.k8s.io/v1beta1"
+kind: "ClusterRoleBinding"
+subjects:
+- kind: "ServiceAccount"
+  name: "prometheus"
+  namespace: "nirmata-monitoring"
+roleRef:
+  apiGroup: "rbac.authorization.k8s.io"
+  kind: "ClusterRole"
+  name: "prometheus"
+
+---
+metadata:
+  name: "prometheus"
+  labels: {}
+apiVersion: "rbac.authorization.k8s.io/v1beta1"
+kind: "ClusterRole"
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - "nodes"
+  - "services"
+  - "endpoints"
+  - "pods"
+  verbs:
+  - "get"
+  - "list"
+  - "watch"
+- apiGroups:
+  - ""
+  resources:
+  - "configmaps"
+  verbs:
+  - "get"
+- nonResourceURLs:
+  - "/metrics"
+  verbs:
+  - "get"
+
+---
+kind: "ConfigMap"
+apiVersion: "v1"
+data:
+  cluster.json: "{\n  \"annotations\": {\n    \"list\": [\n      {\n        \"builtIn\"\
+    : 1,\n        \"datasource\": \"-- Grafana --\",\n        \"enable\": true,\n\
+    \        \"hide\": true,\n        \"iconColor\": \"rgba(0, 211, 255, 1)\",\n \
+    \       \"name\": \"Annotations & Alerts\",\n        \"type\": \"dashboard\"\n\
+    \      }\n    ]\n  },\n  \"description\": \"Monitors Kubernetes cluster using\
+    \ Prometheus. Shows overall cluster CPU / Memory / Filesystem usage as well as\
+    \ individual pod, containers, systemd services statistics. Uses cAdvisor metrics\
+    \ only.\",\n  \"editable\": true,\n  \"gnetId\": 1621,\n  \"graphTooltip\": 0,\n\
+    \  \"id\": 1,\n  \"iteration\": 1555431721926,\n  \"links\": [],\n  \"panels\"\
+    : [\n    {\n      \"collapsed\": false,\n      \"gridPos\": {\n        \"h\":\
+    \ 1,\n        \"w\": 24,\n        \"x\": 0,\n        \"y\": 0\n      },\n    \
+    \  \"id\": 33,\n      \"panels\": [],\n      \"title\": \"Network I/O pressure\"\
+    ,\n      \"type\": \"row\"\n    },\n    {\n      \"aliasColors\": {},\n      \"\
+    bars\": false,\n      \"dashLength\": 10,\n      \"dashes\": false,\n      \"\
+    datasource\": \"Prometheus\",\n      \"decimals\": 2,\n      \"editable\": true,\n\
+    \      \"error\": false,\n      \"fill\": 1,\n      \"grid\": {},\n      \"gridPos\"\
+    : {\n        \"h\": 5,\n        \"w\": 24,\n        \"x\": 0,\n        \"y\":\
+    \ 1\n      },\n      \"height\": \"200px\",\n      \"id\": 32,\n      \"isNew\"\
+    : true,\n      \"legend\": {\n        \"alignAsTable\": false,\n        \"avg\"\
+    : true,\n        \"current\": true,\n        \"max\": false,\n        \"min\"\
+    : false,\n        \"rightSide\": false,\n        \"show\": false,\n        \"\
+    sideWidth\": 200,\n        \"sort\": \"current\",\n        \"sortDesc\": true,\n\
+    \        \"total\": false,\n        \"values\": true\n      },\n      \"lines\"\
+    : true,\n      \"linewidth\": 2,\n      \"links\": [],\n      \"nullPointMode\"\
+    : \"connected\",\n      \"percentage\": false,\n      \"pointradius\": 5,\n  \
+    \    \"points\": false,\n      \"renderer\": \"flot\",\n      \"seriesOverrides\"\
+    : [],\n      \"spaceLength\": 10,\n      \"stack\": false,\n      \"steppedLine\"\
+    : false,\n      \"targets\": [\n        {\n          \"expr\": \"sum (rate (container_network_receive_bytes_total{kubernetes_io_hostname=~\\\
+    \"^$Node$\\\"}[1m]))\",\n          \"interval\": \"10s\",\n          \"intervalFactor\"\
+    : 1,\n          \"legendFormat\": \"Received\",\n          \"metric\": \"network\"\
+    ,\n          \"refId\": \"A\",\n          \"step\": 10\n        },\n        {\n\
+    \          \"expr\": \"- sum (rate (container_network_transmit_bytes_total{kubernetes_io_hostname=~\\\
+    \"^$Node$\\\"}[1m]))\",\n          \"interval\": \"10s\",\n          \"intervalFactor\"\
+    : 1,\n          \"legendFormat\": \"Sent\",\n          \"metric\": \"network\"\
+    ,\n          \"refId\": \"B\",\n          \"step\": 10\n        }\n      ],\n\
+    \      \"thresholds\": [],\n      \"timeFrom\": null,\n      \"timeRegions\":\
+    \ [],\n      \"timeShift\": null,\n      \"title\": \"Network I/O pressure\",\n\
+    \      \"tooltip\": {\n        \"msResolution\": false,\n        \"shared\": true,\n\
+    \        \"sort\": 0,\n        \"value_type\": \"cumulative\"\n      },\n    \
+    \  \"type\": \"graph\",\n      \"xaxis\": {\n        \"buckets\": null,\n    \
+    \    \"mode\": \"time\",\n        \"name\": null,\n        \"show\": true,\n \
+    \       \"values\": []\n      },\n      \"yaxes\": [\n        {\n          \"\
+    format\": \"Bps\",\n          \"label\": null,\n          \"logBase\": 1,\n  \
+    \        \"max\": null,\n          \"min\": null,\n          \"show\": true\n\
+    \        },\n        {\n          \"format\": \"Bps\",\n          \"label\": null,\n\
+    \          \"logBase\": 1,\n          \"max\": null,\n          \"min\": null,\n\
+    \          \"show\": false\n        }\n      ],\n      \"yaxis\": {\n        \"\
+    align\": false,\n        \"alignLevel\": null\n      }\n    },\n    {\n      \"\
+    collapsed\": false,\n      \"gridPos\": {\n        \"h\": 1,\n        \"w\": 24,\n\
+    \        \"x\": 0,\n        \"y\": 6\n      },\n      \"id\": 34,\n      \"panels\"\
+    : [],\n      \"title\": \"Total usage\",\n      \"type\": \"row\"\n    },\n  \
+    \  {\n      \"cacheTimeout\": null,\n      \"colorBackground\": false,\n     \
+    \ \"colorValue\": true,\n      \"colors\": [\n        \"rgba(50, 172, 45, 0.97)\"\
+    ,\n        \"rgba(237, 129, 40, 0.89)\",\n        \"rgba(245, 54, 54, 0.9)\"\n\
+    \      ],\n      \"datasource\": \"Prometheus\",\n      \"editable\": true,\n\
+    \      \"error\": false,\n      \"format\": \"percent\",\n      \"gauge\": {\n\
+    \        \"maxValue\": 100,\n        \"minValue\": 0,\n        \"show\": true,\n\
+    \        \"thresholdLabels\": false,\n        \"thresholdMarkers\": true\n   \
+    \   },\n      \"gridPos\": {\n        \"h\": 5,\n        \"w\": 8,\n        \"\
+    x\": 0,\n        \"y\": 7\n      },\n      \"height\": \"180px\",\n      \"id\"\
+    : 4,\n      \"interval\": null,\n      \"isNew\": true,\n      \"links\": [],\n\
+    \      \"mappingType\": 1,\n      \"mappingTypes\": [\n        {\n          \"\
+    name\": \"value to text\",\n          \"value\": 1\n        },\n        {\n  \
+    \        \"name\": \"range to text\",\n          \"value\": 2\n        }\n   \
+    \   ],\n      \"maxDataPoints\": 100,\n      \"nullPointMode\": \"connected\"\
+    ,\n      \"nullText\": null,\n      \"postfix\": \"\",\n      \"postfixFontSize\"\
+    : \"50%\",\n      \"prefix\": \"\",\n      \"prefixFontSize\": \"50%\",\n    \
+    \  \"rangeMaps\": [\n        {\n          \"from\": \"null\",\n          \"text\"\
+    : \"N/A\",\n          \"to\": \"null\"\n        }\n      ],\n      \"sparkline\"\
+    : {\n        \"fillColor\": \"rgba(31, 118, 189, 0.18)\",\n        \"full\": false,\n\
+    \        \"lineColor\": \"rgb(31, 120, 193)\",\n        \"show\": false\n    \
+    \  },\n      \"tableColumn\": \"\",\n      \"targets\": [\n        {\n       \
+    \   \"expr\": \"sum (container_memory_working_set_bytes{id=\\\"/\\\",kubernetes_io_hostname=~\\\
+    \"^$Node$\\\"}) / sum (machine_memory_bytes{kubernetes_io_hostname=~\\\"^$Node$\\\
+    \"}) * 100\",\n          \"interval\": \"10s\",\n          \"intervalFactor\"\
+    : 1,\n          \"refId\": \"A\",\n          \"step\": 10\n        }\n      ],\n\
+    \      \"thresholds\": \"65, 90\",\n      \"title\": \"Cluster memory usage\"\
+    ,\n      \"type\": \"singlestat\",\n      \"valueFontSize\": \"80%\",\n      \"\
+    valueMaps\": [\n        {\n          \"op\": \"=\",\n          \"text\": \"N/A\"\
+    ,\n          \"value\": \"null\"\n        }\n      ],\n      \"valueName\": \"\
+    current\"\n    },\n    {\n      \"cacheTimeout\": null,\n      \"colorBackground\"\
+    : false,\n      \"colorValue\": true,\n      \"colors\": [\n        \"rgba(50,\
+    \ 172, 45, 0.97)\",\n        \"rgba(237, 129, 40, 0.89)\",\n        \"rgba(245,\
+    \ 54, 54, 0.9)\"\n      ],\n      \"datasource\": \"Prometheus\",\n      \"decimals\"\
+    : 2,\n      \"editable\": true,\n      \"error\": false,\n      \"format\": \"\
+    percent\",\n      \"gauge\": {\n        \"maxValue\": 100,\n        \"minValue\"\
+    : 0,\n        \"show\": true,\n        \"thresholdLabels\": false,\n        \"\
+    thresholdMarkers\": true\n      },\n      \"gridPos\": {\n        \"h\": 5,\n\
+    \        \"w\": 8,\n        \"x\": 8,\n        \"y\": 7\n      },\n      \"height\"\
+    : \"180px\",\n      \"id\": 6,\n      \"interval\": null,\n      \"isNew\": true,\n\
+    \      \"links\": [],\n      \"mappingType\": 1,\n      \"mappingTypes\": [\n\
+    \        {\n          \"name\": \"value to text\",\n          \"value\": 1\n \
+    \       },\n        {\n          \"name\": \"range to text\",\n          \"value\"\
+    : 2\n        }\n      ],\n      \"maxDataPoints\": 100,\n      \"nullPointMode\"\
+    : \"connected\",\n      \"nullText\": null,\n      \"postfix\": \"\",\n      \"\
+    postfixFontSize\": \"50%\",\n      \"prefix\": \"\",\n      \"prefixFontSize\"\
+    : \"50%\",\n      \"rangeMaps\": [\n        {\n          \"from\": \"null\",\n\
+    \          \"text\": \"N/A\",\n          \"to\": \"null\"\n        }\n      ],\n\
+    \      \"sparkline\": {\n        \"fillColor\": \"rgba(31, 118, 189, 0.18)\",\n\
+    \        \"full\": false,\n        \"lineColor\": \"rgb(31, 120, 193)\",\n   \
+    \     \"show\": false\n      },\n      \"tableColumn\": \"\",\n      \"targets\"\
+    : [\n        {\n          \"expr\": \"sum (rate (container_cpu_usage_seconds_total{id=\\\
+    \"/\\\",kubernetes_io_hostname=~\\\"^$Node$\\\"}[1m])) / sum (machine_cpu_cores{kubernetes_io_hostname=~\\\
+    \"^$Node$\\\"}) * 100\",\n          \"interval\": \"10s\",\n          \"intervalFactor\"\
+    : 1,\n          \"refId\": \"A\",\n          \"step\": 10\n        }\n      ],\n\
+    \      \"thresholds\": \"65, 90\",\n      \"title\": \"Cluster CPU usage (1m avg)\"\
+    ,\n      \"type\": \"singlestat\",\n      \"valueFontSize\": \"80%\",\n      \"\
+    valueMaps\": [\n        {\n          \"op\": \"=\",\n          \"text\": \"N/A\"\
+    ,\n          \"value\": \"null\"\n        }\n      ],\n      \"valueName\": \"\
+    current\"\n    },\n    {\n      \"cacheTimeout\": null,\n      \"colorBackground\"\
+    : false,\n      \"colorValue\": true,\n      \"colors\": [\n        \"rgba(50,\
+    \ 172, 45, 0.97)\",\n        \"rgba(237, 129, 40, 0.89)\",\n        \"rgba(245,\
+    \ 54, 54, 0.9)\"\n      ],\n      \"datasource\": \"Prometheus\",\n      \"decimals\"\
+    : 2,\n      \"editable\": true,\n      \"error\": false,\n      \"format\": \"\
+    percent\",\n      \"gauge\": {\n        \"maxValue\": 100,\n        \"minValue\"\
+    : 0,\n        \"show\": true,\n        \"thresholdLabels\": false,\n        \"\
+    thresholdMarkers\": true\n      },\n      \"gridPos\": {\n        \"h\": 5,\n\
+    \        \"w\": 8,\n        \"x\": 16,\n        \"y\": 7\n      },\n      \"height\"\
+    : \"180px\",\n      \"id\": 7,\n      \"interval\": null,\n      \"isNew\": true,\n\
+    \      \"links\": [],\n      \"mappingType\": 1,\n      \"mappingTypes\": [\n\
+    \        {\n          \"name\": \"value to text\",\n          \"value\": 1\n \
+    \       },\n        {\n          \"name\": \"range to text\",\n          \"value\"\
+    : 2\n        }\n      ],\n      \"maxDataPoints\": 100,\n      \"nullPointMode\"\
+    : \"connected\",\n      \"nullText\": null,\n      \"postfix\": \"\",\n      \"\
+    postfixFontSize\": \"50%\",\n      \"prefix\": \"\",\n      \"prefixFontSize\"\
+    : \"50%\",\n      \"rangeMaps\": [\n        {\n          \"from\": \"null\",\n\
+    \          \"text\": \"N/A\",\n          \"to\": \"null\"\n        }\n      ],\n\
+    \      \"sparkline\": {\n        \"fillColor\": \"rgba(31, 118, 189, 0.18)\",\n\
+    \        \"full\": false,\n        \"lineColor\": \"rgb(31, 120, 193)\",\n   \
+    \     \"show\": false\n      },\n      \"tableColumn\": \"\",\n      \"targets\"\
+    : [\n        {\n          \"expr\": \"sum (container_fs_usage_bytes{device=~\\\
+    \"^/dev/.*$\\\",id=\\\"/\\\",kubernetes_io_hostname=~\\\"^$Node$\\\"}) / sum (container_fs_limit_bytes{device=~\\\
+    \"^/dev/.*$\\\",id=\\\"/\\\",kubernetes_io_hostname=~\\\"^$Node$\\\"}) * 100\"\
+    ,\n          \"interval\": \"10s\",\n          \"intervalFactor\": 1,\n      \
+    \    \"legendFormat\": \"\",\n          \"metric\": \"\",\n          \"refId\"\
+    : \"A\",\n          \"step\": 10\n        }\n      ],\n      \"thresholds\": \"\
+    65, 90\",\n      \"title\": \"Cluster filesystem usage\",\n      \"type\": \"\
+    singlestat\",\n      \"valueFontSize\": \"80%\",\n      \"valueMaps\": [\n   \
+    \     {\n          \"op\": \"=\",\n          \"text\": \"N/A\",\n          \"\
+    value\": \"null\"\n        }\n      ],\n      \"valueName\": \"current\"\n   \
+    \ },\n    {\n      \"cacheTimeout\": null,\n      \"colorBackground\": false,\n\
+    \      \"colorValue\": false,\n      \"colors\": [\n        \"rgba(50, 172, 45,\
+    \ 0.97)\",\n        \"rgba(237, 129, 40, 0.89)\",\n        \"rgba(245, 54, 54,\
+    \ 0.9)\"\n      ],\n      \"datasource\": \"Prometheus\",\n      \"decimals\"\
+    : 2,\n      \"editable\": true,\n      \"error\": false,\n      \"format\": \"\
+    bytes\",\n      \"gauge\": {\n        \"maxValue\": 100,\n        \"minValue\"\
+    : 0,\n        \"show\": false,\n        \"thresholdLabels\": false,\n        \"\
+    thresholdMarkers\": true\n      },\n      \"gridPos\": {\n        \"h\": 3,\n\
+    \        \"w\": 4,\n        \"x\": 0,\n        \"y\": 12\n      },\n      \"height\"\
+    : \"1px\",\n      \"id\": 9,\n      \"interval\": null,\n      \"isNew\": true,\n\
+    \      \"links\": [],\n      \"mappingType\": 1,\n      \"mappingTypes\": [\n\
+    \        {\n          \"name\": \"value to text\",\n          \"value\": 1\n \
+    \       },\n        {\n          \"name\": \"range to text\",\n          \"value\"\
+    : 2\n        }\n      ],\n      \"maxDataPoints\": 100,\n      \"nullPointMode\"\
+    : \"connected\",\n      \"nullText\": null,\n      \"postfix\": \"\",\n      \"\
+    postfixFontSize\": \"20%\",\n      \"prefix\": \"\",\n      \"prefixFontSize\"\
+    : \"20%\",\n      \"rangeMaps\": [\n        {\n          \"from\": \"null\",\n\
+    \          \"text\": \"N/A\",\n          \"to\": \"null\"\n        }\n      ],\n\
+    \      \"sparkline\": {\n        \"fillColor\": \"rgba(31, 118, 189, 0.18)\",\n\
+    \        \"full\": false,\n        \"lineColor\": \"rgb(31, 120, 193)\",\n   \
+    \     \"show\": false\n      },\n      \"tableColumn\": \"\",\n      \"targets\"\
+    : [\n        {\n          \"expr\": \"sum (container_memory_working_set_bytes{id=\\\
+    \"/\\\",kubernetes_io_hostname=~\\\"^$Node$\\\"})\",\n          \"interval\":\
+    \ \"10s\",\n          \"intervalFactor\": 1,\n          \"refId\": \"A\",\n  \
+    \        \"step\": 10\n        }\n      ],\n      \"thresholds\": \"\",\n    \
+    \  \"title\": \"Used\",\n      \"type\": \"singlestat\",\n      \"valueFontSize\"\
+    : \"50%\",\n      \"valueMaps\": [\n        {\n          \"op\": \"=\",\n    \
+    \      \"text\": \"N/A\",\n          \"value\": \"null\"\n        }\n      ],\n\
+    \      \"valueName\": \"current\"\n    },\n    {\n      \"cacheTimeout\": null,\n\
+    \      \"colorBackground\": false,\n      \"colorValue\": false,\n      \"colors\"\
+    : [\n        \"rgba(50, 172, 45, 0.97)\",\n        \"rgba(237, 129, 40, 0.89)\"\
+    ,\n        \"rgba(245, 54, 54, 0.9)\"\n      ],\n      \"datasource\": \"Prometheus\"\
+    ,\n      \"decimals\": 2,\n      \"editable\": true,\n      \"error\": false,\n\
+    \      \"format\": \"bytes\",\n      \"gauge\": {\n        \"maxValue\": 100,\n\
+    \        \"minValue\": 0,\n        \"show\": false,\n        \"thresholdLabels\"\
+    : false,\n        \"thresholdMarkers\": true\n      },\n      \"gridPos\": {\n\
+    \        \"h\": 3,\n        \"w\": 4,\n        \"x\": 4,\n        \"y\": 12\n\
+    \      },\n      \"height\": \"1px\",\n      \"id\": 10,\n      \"interval\":\
+    \ null,\n      \"isNew\": true,\n      \"links\": [],\n      \"mappingType\":\
+    \ 1,\n      \"mappingTypes\": [\n        {\n          \"name\": \"value to text\"\
+    ,\n          \"value\": 1\n        },\n        {\n          \"name\": \"range\
+    \ to text\",\n          \"value\": 2\n        }\n      ],\n      \"maxDataPoints\"\
+    : 100,\n      \"nullPointMode\": \"connected\",\n      \"nullText\": null,\n \
+    \     \"postfix\": \"\",\n      \"postfixFontSize\": \"50%\",\n      \"prefix\"\
+    : \"\",\n      \"prefixFontSize\": \"50%\",\n      \"rangeMaps\": [\n        {\n\
+    \          \"from\": \"null\",\n          \"text\": \"N/A\",\n          \"to\"\
+    : \"null\"\n        }\n      ],\n      \"sparkline\": {\n        \"fillColor\"\
+    : \"rgba(31, 118, 189, 0.18)\",\n        \"full\": false,\n        \"lineColor\"\
+    : \"rgb(31, 120, 193)\",\n        \"show\": false\n      },\n      \"tableColumn\"\
+    : \"\",\n      \"targets\": [\n        {\n          \"expr\": \"sum (machine_memory_bytes{kubernetes_io_hostname=~\\\
+    \"^$Node$\\\"})\",\n          \"interval\": \"10s\",\n          \"intervalFactor\"\
+    : 1,\n          \"refId\": \"A\",\n          \"step\": 10\n        }\n      ],\n\
+    \      \"thresholds\": \"\",\n      \"title\": \"Total\",\n      \"type\": \"\
+    singlestat\",\n      \"valueFontSize\": \"50%\",\n      \"valueMaps\": [\n   \
+    \     {\n          \"op\": \"=\",\n          \"text\": \"N/A\",\n          \"\
+    value\": \"null\"\n        }\n      ],\n      \"valueName\": \"current\"\n   \
+    \ },\n    {\n      \"cacheTimeout\": null,\n      \"colorBackground\": false,\n\
+    \      \"colorValue\": false,\n      \"colors\": [\n        \"rgba(50, 172, 45,\
+    \ 0.97)\",\n        \"rgba(237, 129, 40, 0.89)\",\n        \"rgba(245, 54, 54,\
+    \ 0.9)\"\n      ],\n      \"datasource\": \"Prometheus\",\n      \"decimals\"\
+    : 2,\n      \"editable\": true,\n      \"error\": false,\n      \"format\": \"\
+    none\",\n      \"gauge\": {\n        \"maxValue\": 100,\n        \"minValue\"\
+    : 0,\n        \"show\": false,\n        \"thresholdLabels\": false,\n        \"\
+    thresholdMarkers\": true\n      },\n      \"gridPos\": {\n        \"h\": 3,\n\
+    \        \"w\": 4,\n        \"x\": 8,\n        \"y\": 12\n      },\n      \"height\"\
+    : \"1px\",\n      \"id\": 11,\n      \"interval\": null,\n      \"isNew\": true,\n\
+    \      \"links\": [],\n      \"mappingType\": 1,\n      \"mappingTypes\": [\n\
+    \        {\n          \"name\": \"value to text\",\n          \"value\": 1\n \
+    \       },\n        {\n          \"name\": \"range to text\",\n          \"value\"\
+    : 2\n        }\n      ],\n      \"maxDataPoints\": 100,\n      \"nullPointMode\"\
+    : \"connected\",\n      \"nullText\": null,\n      \"postfix\": \" cores\",\n\
+    \      \"postfixFontSize\": \"30%\",\n      \"prefix\": \"\",\n      \"prefixFontSize\"\
+    : \"50%\",\n      \"rangeMaps\": [\n        {\n          \"from\": \"null\",\n\
+    \          \"text\": \"N/A\",\n          \"to\": \"null\"\n        }\n      ],\n\
+    \      \"sparkline\": {\n        \"fillColor\": \"rgba(31, 118, 189, 0.18)\",\n\
+    \        \"full\": false,\n        \"lineColor\": \"rgb(31, 120, 193)\",\n   \
+    \     \"show\": false\n      },\n      \"tableColumn\": \"\",\n      \"targets\"\
+    : [\n        {\n          \"expr\": \"sum (rate (container_cpu_usage_seconds_total{id=\\\
+    \"/\\\",kubernetes_io_hostname=~\\\"^$Node$\\\"}[1m]))\",\n          \"interval\"\
+    : \"10s\",\n          \"intervalFactor\": 1,\n          \"refId\": \"A\",\n  \
+    \        \"step\": 10\n        }\n      ],\n      \"thresholds\": \"\",\n    \
+    \  \"title\": \"Used\",\n      \"type\": \"singlestat\",\n      \"valueFontSize\"\
+    : \"50%\",\n      \"valueMaps\": [\n        {\n          \"op\": \"=\",\n    \
+    \      \"text\": \"N/A\",\n          \"value\": \"null\"\n        }\n      ],\n\
+    \      \"valueName\": \"current\"\n    },\n    {\n      \"cacheTimeout\": null,\n\
+    \      \"colorBackground\": false,\n      \"colorValue\": false,\n      \"colors\"\
+    : [\n        \"rgba(50, 172, 45, 0.97)\",\n        \"rgba(237, 129, 40, 0.89)\"\
+    ,\n        \"rgba(245, 54, 54, 0.9)\"\n      ],\n      \"datasource\": \"Prometheus\"\
+    ,\n      \"decimals\": 2,\n      \"editable\": true,\n      \"error\": false,\n\
+    \      \"format\": \"none\",\n      \"gauge\": {\n        \"maxValue\": 100,\n\
+    \        \"minValue\": 0,\n        \"show\": false,\n        \"thresholdLabels\"\
+    : false,\n        \"thresholdMarkers\": true\n      },\n      \"gridPos\": {\n\
+    \        \"h\": 3,\n        \"w\": 4,\n        \"x\": 12,\n        \"y\": 12\n\
+    \      },\n      \"height\": \"1px\",\n      \"id\": 12,\n      \"interval\":\
+    \ null,\n      \"isNew\": true,\n      \"links\": [],\n      \"mappingType\":\
+    \ 1,\n      \"mappingTypes\": [\n        {\n          \"name\": \"value to text\"\
+    ,\n          \"value\": 1\n        },\n        {\n          \"name\": \"range\
+    \ to text\",\n          \"value\": 2\n        }\n      ],\n      \"maxDataPoints\"\
+    : 100,\n      \"nullPointMode\": \"connected\",\n      \"nullText\": null,\n \
+    \     \"postfix\": \" cores\",\n      \"postfixFontSize\": \"30%\",\n      \"\
+    prefix\": \"\",\n      \"prefixFontSize\": \"50%\",\n      \"rangeMaps\": [\n\
+    \        {\n          \"from\": \"null\",\n          \"text\": \"N/A\",\n    \
+    \      \"to\": \"null\"\n        }\n      ],\n      \"sparkline\": {\n       \
+    \ \"fillColor\": \"rgba(31, 118, 189, 0.18)\",\n        \"full\": false,\n   \
+    \     \"lineColor\": \"rgb(31, 120, 193)\",\n        \"show\": false\n      },\n\
+    \      \"tableColumn\": \"\",\n      \"targets\": [\n        {\n          \"expr\"\
+    : \"sum (machine_cpu_cores{kubernetes_io_hostname=~\\\"^$Node$\\\"})\",\n    \
+    \      \"interval\": \"10s\",\n          \"intervalFactor\": 1,\n          \"\
+    refId\": \"A\",\n          \"step\": 10\n        }\n      ],\n      \"thresholds\"\
+    : \"\",\n      \"title\": \"Total\",\n      \"type\": \"singlestat\",\n      \"\
+    valueFontSize\": \"50%\",\n      \"valueMaps\": [\n        {\n          \"op\"\
+    : \"=\",\n          \"text\": \"N/A\",\n          \"value\": \"null\"\n      \
+    \  }\n      ],\n      \"valueName\": \"current\"\n    },\n    {\n      \"cacheTimeout\"\
+    : null,\n      \"colorBackground\": false,\n      \"colorValue\": false,\n   \
+    \   \"colors\": [\n        \"rgba(50, 172, 45, 0.97)\",\n        \"rgba(237, 129,\
+    \ 40, 0.89)\",\n        \"rgba(245, 54, 54, 0.9)\"\n      ],\n      \"datasource\"\
+    : \"Prometheus\",\n      \"decimals\": 2,\n      \"editable\": true,\n      \"\
+    error\": false,\n      \"format\": \"bytes\",\n      \"gauge\": {\n        \"\
+    maxValue\": 100,\n        \"minValue\": 0,\n        \"show\": false,\n       \
+    \ \"thresholdLabels\": false,\n        \"thresholdMarkers\": true\n      },\n\
+    \      \"gridPos\": {\n        \"h\": 3,\n        \"w\": 4,\n        \"x\": 16,\n\
+    \        \"y\": 12\n      },\n      \"height\": \"1px\",\n      \"id\": 13,\n\
+    \      \"interval\": null,\n      \"isNew\": true,\n      \"links\": [],\n   \
+    \   \"mappingType\": 1,\n      \"mappingTypes\": [\n        {\n          \"name\"\
+    : \"value to text\",\n          \"value\": 1\n        },\n        {\n        \
+    \  \"name\": \"range to text\",\n          \"value\": 2\n        }\n      ],\n\
+    \      \"maxDataPoints\": 100,\n      \"nullPointMode\": \"connected\",\n    \
+    \  \"nullText\": null,\n      \"postfix\": \"\",\n      \"postfixFontSize\": \"\
+    50%\",\n      \"prefix\": \"\",\n      \"prefixFontSize\": \"50%\",\n      \"\
+    rangeMaps\": [\n        {\n          \"from\": \"null\",\n          \"text\":\
+    \ \"N/A\",\n          \"to\": \"null\"\n        }\n      ],\n      \"sparkline\"\
+    : {\n        \"fillColor\": \"rgba(31, 118, 189, 0.18)\",\n        \"full\": false,\n\
+    \        \"lineColor\": \"rgb(31, 120, 193)\",\n        \"show\": false\n    \
+    \  },\n      \"tableColumn\": \"\",\n      \"targets\": [\n        {\n       \
+    \   \"expr\": \"sum (container_fs_usage_bytes{device=~\\\"^/dev/.*$\\\",id=\\\"\
+    /\\\",kubernetes_io_hostname=~\\\"^$Node$\\\"})\",\n          \"interval\": \"\
+    10s\",\n          \"intervalFactor\": 1,\n          \"refId\": \"A\",\n      \
+    \    \"step\": 10\n        }\n      ],\n      \"thresholds\": \"\",\n      \"\
+    title\": \"Used\",\n      \"type\": \"singlestat\",\n      \"valueFontSize\":\
+    \ \"50%\",\n      \"valueMaps\": [\n        {\n          \"op\": \"=\",\n    \
+    \      \"text\": \"N/A\",\n          \"value\": \"null\"\n        }\n      ],\n\
+    \      \"valueName\": \"current\"\n    },\n    {\n      \"cacheTimeout\": null,\n\
+    \      \"colorBackground\": false,\n      \"colorValue\": false,\n      \"colors\"\
+    : [\n        \"rgba(50, 172, 45, 0.97)\",\n        \"rgba(237, 129, 40, 0.89)\"\
+    ,\n        \"rgba(245, 54, 54, 0.9)\"\n      ],\n      \"datasource\": \"Prometheus\"\
+    ,\n      \"decimals\": 2,\n      \"editable\": true,\n      \"error\": false,\n\
+    \      \"format\": \"bytes\",\n      \"gauge\": {\n        \"maxValue\": 100,\n\
+    \        \"minValue\": 0,\n        \"show\": false,\n        \"thresholdLabels\"\
+    : false,\n        \"thresholdMarkers\": true\n      },\n      \"gridPos\": {\n\
+    \        \"h\": 3,\n        \"w\": 4,\n        \"x\": 20,\n        \"y\": 12\n\
+    \      },\n      \"height\": \"1px\",\n      \"id\": 14,\n      \"interval\":\
+    \ null,\n      \"isNew\": true,\n      \"links\": [],\n      \"mappingType\":\
+    \ 1,\n      \"mappingTypes\": [\n        {\n          \"name\": \"value to text\"\
+    ,\n          \"value\": 1\n        },\n        {\n          \"name\": \"range\
+    \ to text\",\n          \"value\": 2\n        }\n      ],\n      \"maxDataPoints\"\
+    : 100,\n      \"nullPointMode\": \"connected\",\n      \"nullText\": null,\n \
+    \     \"postfix\": \"\",\n      \"postfixFontSize\": \"50%\",\n      \"prefix\"\
+    : \"\",\n      \"prefixFontSize\": \"50%\",\n      \"rangeMaps\": [\n        {\n\
+    \          \"from\": \"null\",\n          \"text\": \"N/A\",\n          \"to\"\
+    : \"null\"\n        }\n      ],\n      \"sparkline\": {\n        \"fillColor\"\
+    : \"rgba(31, 118, 189, 0.18)\",\n        \"full\": false,\n        \"lineColor\"\
+    : \"rgb(31, 120, 193)\",\n        \"show\": false\n      },\n      \"tableColumn\"\
+    : \"\",\n      \"targets\": [\n        {\n          \"expr\": \"sum (container_fs_limit_bytes{device=~\\\
+    \"^/dev/.*$\\\",id=\\\"/\\\",kubernetes_io_hostname=~\\\"^$Node$\\\"})\",\n  \
+    \        \"interval\": \"10s\",\n          \"intervalFactor\": 1,\n          \"\
+    refId\": \"A\",\n          \"step\": 10\n        }\n      ],\n      \"thresholds\"\
+    : \"\",\n      \"title\": \"Total\",\n      \"type\": \"singlestat\",\n      \"\
+    valueFontSize\": \"50%\",\n      \"valueMaps\": [\n        {\n          \"op\"\
+    : \"=\",\n          \"text\": \"N/A\",\n          \"value\": \"null\"\n      \
+    \  }\n      ],\n      \"valueName\": \"current\"\n    },\n    {\n      \"collapsed\"\
+    : false,\n      \"gridPos\": {\n        \"h\": 1,\n        \"w\": 24,\n      \
+    \  \"x\": 0,\n        \"y\": 15\n      },\n      \"id\": 35,\n      \"panels\"\
+    : [],\n      \"title\": \"Pods CPU usage\",\n      \"type\": \"row\"\n    },\n\
+    \    {\n      \"aliasColors\": {},\n      \"bars\": false,\n      \"dashLength\"\
+    : 10,\n      \"dashes\": false,\n      \"datasource\": \"Prometheus\",\n     \
+    \ \"decimals\": 3,\n      \"editable\": true,\n      \"error\": false,\n     \
+    \ \"fill\": 0,\n      \"grid\": {},\n      \"gridPos\": {\n        \"h\": 7,\n\
+    \        \"w\": 24,\n        \"x\": 0,\n        \"y\": 16\n      },\n      \"\
+    height\": \"\",\n      \"id\": 17,\n      \"isNew\": true,\n      \"legend\":\
+    \ {\n        \"alignAsTable\": true,\n        \"avg\": true,\n        \"current\"\
+    : true,\n        \"max\": false,\n        \"min\": false,\n        \"rightSide\"\
+    : true,\n        \"show\": true,\n        \"sort\": \"current\",\n        \"sortDesc\"\
+    : true,\n        \"total\": false,\n        \"values\": true\n      },\n     \
+    \ \"lines\": true,\n      \"linewidth\": 2,\n      \"links\": [],\n      \"nullPointMode\"\
+    : \"connected\",\n      \"percentage\": false,\n      \"pointradius\": 5,\n  \
+    \    \"points\": false,\n      \"renderer\": \"flot\",\n      \"seriesOverrides\"\
+    : [],\n      \"spaceLength\": 10,\n      \"stack\": false,\n      \"steppedLine\"\
+    : true,\n      \"targets\": [\n        {\n          \"expr\": \"sum (rate (container_cpu_usage_seconds_total{image!=\\\
+    \"\\\",name=~\\\"^k8s_.*\\\",kubernetes_io_hostname=~\\\"^$Node$\\\"}[1m])) by\
+    \ (pod_name)\",\n          \"interval\": \"10s\",\n          \"intervalFactor\"\
+    : 1,\n          \"legendFormat\": \"{{ pod_name }}\",\n          \"metric\": \"\
+    container_cpu\",\n          \"refId\": \"A\",\n          \"step\": 10\n      \
+    \  }\n      ],\n      \"thresholds\": [],\n      \"timeFrom\": null,\n      \"\
+    timeRegions\": [],\n      \"timeShift\": null,\n      \"title\": \"Pods CPU usage\
+    \ (1m avg)\",\n      \"tooltip\": {\n        \"msResolution\": true,\n       \
+    \ \"shared\": true,\n        \"sort\": 2,\n        \"value_type\": \"cumulative\"\
+    \n      },\n      \"type\": \"graph\",\n      \"xaxis\": {\n        \"buckets\"\
+    : null,\n        \"mode\": \"time\",\n        \"name\": null,\n        \"show\"\
+    : true,\n        \"values\": []\n      },\n      \"yaxes\": [\n        {\n   \
+    \       \"format\": \"none\",\n          \"label\": \"cores\",\n          \"logBase\"\
+    : 1,\n          \"max\": null,\n          \"min\": null,\n          \"show\":\
+    \ true\n        },\n        {\n          \"format\": \"short\",\n          \"\
+    label\": null,\n          \"logBase\": 1,\n          \"max\": null,\n        \
+    \  \"min\": null,\n          \"show\": false\n        }\n      ],\n      \"yaxis\"\
+    : {\n        \"align\": false,\n        \"alignLevel\": null\n      }\n    },\n\
+    \    {\n      \"collapsed\": false,\n      \"gridPos\": {\n        \"h\": 1,\n\
+    \        \"w\": 24,\n        \"x\": 0,\n        \"y\": 23\n      },\n      \"\
+    id\": 39,\n      \"panels\": [],\n      \"title\": \"Pods memory usage\",\n  \
+    \    \"type\": \"row\"\n    },\n    {\n      \"aliasColors\": {},\n      \"bars\"\
+    : false,\n      \"dashLength\": 10,\n      \"dashes\": false,\n      \"datasource\"\
+    : \"Prometheus\",\n      \"decimals\": 2,\n      \"editable\": true,\n      \"\
+    error\": false,\n      \"fill\": 0,\n      \"grid\": {},\n      \"gridPos\": {\n\
+    \        \"h\": 7,\n        \"w\": 24,\n        \"x\": 0,\n        \"y\": 24\n\
+    \      },\n      \"id\": 25,\n      \"isNew\": true,\n      \"legend\": {\n  \
+    \      \"alignAsTable\": true,\n        \"avg\": true,\n        \"current\": true,\n\
+    \        \"max\": false,\n        \"min\": false,\n        \"rightSide\": true,\n\
+    \        \"show\": true,\n        \"sideWidth\": 200,\n        \"sort\": \"current\"\
+    ,\n        \"sortDesc\": true,\n        \"total\": false,\n        \"values\"\
+    : true\n      },\n      \"lines\": true,\n      \"linewidth\": 2,\n      \"links\"\
+    : [],\n      \"nullPointMode\": \"connected\",\n      \"percentage\": false,\n\
+    \      \"pointradius\": 5,\n      \"points\": false,\n      \"renderer\": \"flot\"\
+    ,\n      \"seriesOverrides\": [],\n      \"spaceLength\": 10,\n      \"stack\"\
+    : false,\n      \"steppedLine\": true,\n      \"targets\": [\n        {\n    \
+    \      \"expr\": \"sum (container_memory_working_set_bytes{image!=\\\"\\\",name=~\\\
+    \"^k8s_.*\\\",kubernetes_io_hostname=~\\\"^$Node$\\\"}) by (pod_name)\",\n   \
+    \       \"interval\": \"10s\",\n          \"intervalFactor\": 1,\n          \"\
+    legendFormat\": \"{{ pod_name }}\",\n          \"metric\": \"container_memory_usage:sort_desc\"\
+    ,\n          \"refId\": \"A\",\n          \"step\": 10\n        }\n      ],\n\
+    \      \"thresholds\": [],\n      \"timeFrom\": null,\n      \"timeRegions\":\
+    \ [],\n      \"timeShift\": null,\n      \"title\": \"Pods memory usage\",\n \
+    \     \"tooltip\": {\n        \"msResolution\": false,\n        \"shared\": true,\n\
+    \        \"sort\": 2,\n        \"value_type\": \"cumulative\"\n      },\n    \
+    \  \"type\": \"graph\",\n      \"xaxis\": {\n        \"buckets\": null,\n    \
+    \    \"mode\": \"time\",\n        \"name\": null,\n        \"show\": true,\n \
+    \       \"values\": []\n      },\n      \"yaxes\": [\n        {\n          \"\
+    format\": \"bytes\",\n          \"label\": null,\n          \"logBase\": 1,\n\
+    \          \"max\": null,\n          \"min\": null,\n          \"show\": true\n\
+    \        },\n        {\n          \"format\": \"short\",\n          \"label\"\
+    : null,\n          \"logBase\": 1,\n          \"max\": null,\n          \"min\"\
+    : null,\n          \"show\": false\n        }\n      ],\n      \"yaxis\": {\n\
+    \        \"align\": false,\n        \"alignLevel\": null\n      }\n    },\n  \
+    \  {\n      \"collapsed\": false,\n      \"gridPos\": {\n        \"h\": 1,\n \
+    \       \"w\": 24,\n        \"x\": 0,\n        \"y\": 31\n      },\n      \"id\"\
+    : 43,\n      \"panels\": [],\n      \"title\": \"Pods network I/O\",\n      \"\
+    type\": \"row\"\n    },\n    {\n      \"aliasColors\": {},\n      \"bars\": false,\n\
+    \      \"dashLength\": 10,\n      \"dashes\": false,\n      \"datasource\": \"\
+    Prometheus\",\n      \"decimals\": 2,\n      \"editable\": true,\n      \"error\"\
+    : false,\n      \"fill\": 1,\n      \"grid\": {},\n      \"gridPos\": {\n    \
+    \    \"h\": 7,\n        \"w\": 24,\n        \"x\": 0,\n        \"y\": 32\n   \
+    \   },\n      \"id\": 16,\n      \"isNew\": true,\n      \"legend\": {\n     \
+    \   \"alignAsTable\": true,\n        \"avg\": true,\n        \"current\": true,\n\
+    \        \"max\": false,\n        \"min\": false,\n        \"rightSide\": true,\n\
+    \        \"show\": true,\n        \"sideWidth\": 200,\n        \"sort\": \"current\"\
+    ,\n        \"sortDesc\": true,\n        \"total\": false,\n        \"values\"\
+    : true\n      },\n      \"lines\": true,\n      \"linewidth\": 2,\n      \"links\"\
+    : [],\n      \"nullPointMode\": \"connected\",\n      \"percentage\": false,\n\
+    \      \"pointradius\": 5,\n      \"points\": false,\n      \"renderer\": \"flot\"\
+    ,\n      \"seriesOverrides\": [],\n      \"spaceLength\": 10,\n      \"stack\"\
+    : false,\n      \"steppedLine\": false,\n      \"targets\": [\n        {\n   \
+    \       \"expr\": \"sum (rate (container_network_receive_bytes_total{image!=\\\
+    \"\\\",name=~\\\"^k8s_.*\\\",kubernetes_io_hostname=~\\\"^$Node$\\\"}[1m])) by\
+    \ (pod_name)\",\n          \"interval\": \"10s\",\n          \"intervalFactor\"\
+    : 1,\n          \"legendFormat\": \"-> {{ pod_name }}\",\n          \"metric\"\
+    : \"network\",\n          \"refId\": \"A\",\n          \"step\": 10\n        },\n\
+    \        {\n          \"expr\": \"- sum (rate (container_network_transmit_bytes_total{image!=\\\
+    \"\\\",name=~\\\"^k8s_.*\\\",kubernetes_io_hostname=~\\\"^$Node$\\\"}[1m])) by\
+    \ (pod_name)\",\n          \"interval\": \"10s\",\n          \"intervalFactor\"\
+    : 1,\n          \"legendFormat\": \"<- {{ pod_name }}\",\n          \"metric\"\
+    : \"network\",\n          \"refId\": \"B\",\n          \"step\": 10\n        }\n\
+    \      ],\n      \"thresholds\": [],\n      \"timeFrom\": null,\n      \"timeRegions\"\
+    : [],\n      \"timeShift\": null,\n      \"title\": \"Pods network I/O (1m avg)\"\
+    ,\n      \"tooltip\": {\n        \"msResolution\": false,\n        \"shared\"\
+    : true,\n        \"sort\": 2,\n        \"value_type\": \"cumulative\"\n      },\n\
+    \      \"type\": \"graph\",\n      \"xaxis\": {\n        \"buckets\": null,\n\
+    \        \"mode\": \"time\",\n        \"name\": null,\n        \"show\": true,\n\
+    \        \"values\": []\n      },\n      \"yaxes\": [\n        {\n          \"\
+    format\": \"Bps\",\n          \"label\": null,\n          \"logBase\": 1,\n  \
+    \        \"max\": null,\n          \"min\": null,\n          \"show\": true\n\
+    \        },\n        {\n          \"format\": \"short\",\n          \"label\"\
+    : null,\n          \"logBase\": 1,\n          \"max\": null,\n          \"min\"\
+    : null,\n          \"show\": false\n        }\n      ],\n      \"yaxis\": {\n\
+    \        \"align\": false,\n        \"alignLevel\": null\n      }\n    }\n  ],\n\
+    \  \"refresh\": \"30s\",\n  \"schemaVersion\": 18,\n  \"style\": \"dark\",\n \
+    \ \"tags\": [\n    \"kubernetes\"\n  ],\n  \"templating\": {\n    \"list\": [\n\
+    \      {\n        \"allValue\": \".*\",\n        \"current\": {\n          \"\
+    text\": \"All\",\n          \"value\": \"$__all\"\n        },\n        \"datasource\"\
+    : \"Prometheus\",\n        \"definition\": \"\",\n        \"hide\": 0,\n     \
+    \   \"includeAll\": true,\n        \"label\": null,\n        \"multi\": false,\n\
+    \        \"name\": \"Node\",\n        \"options\": [],\n        \"query\": \"\
+    label_values(kubernetes_io_hostname)\",\n        \"refresh\": 1,\n        \"regex\"\
+    : \"\",\n        \"skipUrlSync\": false,\n        \"sort\": 0,\n        \"tagValuesQuery\"\
+    : \"\",\n        \"tags\": [],\n        \"tagsQuery\": \"\",\n        \"type\"\
+    : \"query\",\n        \"useTags\": false\n      }\n    ]\n  },\n  \"time\": {\n\
+    \    \"from\": \"now-15m\",\n    \"to\": \"now\"\n  },\n  \"timepicker\": {\n\
+    \    \"refresh_intervals\": [\n      \"5s\",\n      \"10s\",\n      \"30s\",\n\
+    \      \"1m\",\n      \"5m\",\n      \"15m\",\n      \"30m\",\n      \"1h\",\n\
+    \      \"2h\",\n      \"1d\"\n    ],\n    \"time_options\": [\n      \"5m\",\n\
+    \      \"15m\",\n      \"1h\",\n      \"6h\",\n      \"12h\",\n      \"24h\",\n\
+    \      \"2d\",\n      \"7d\",\n      \"30d\"\n    ]\n  },\n  \"timezone\": \"\
+    browser\",\n  \"title\": \"Kubernetes cluster monitoring\",\n  \"uid\": \"xcuSwfgWk\"\
+    ,\n  \"version\": 1\n}"
+binaryData: {}
+metadata:
+  uid: "9306f921-5ff0-11e9-97b9-3e651763bfbe"
+  annotations: {}
+  name: "kubernetes-dashboards"
+  labels:
+    nirmata.io/application.addon.type: "Monitoring"
+    nirmata.io/configmap.name: "kubernetes-dashboards"
+    nirmata.io/application.type: "cluster-addon"
+
+---
+metadata:
+  name: "kube-state-metrics-resizer"
+  labels: {}
+apiVersion: "rbac.authorization.k8s.io/v1"
+kind: "Role"
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - "pods"
+  verbs:
+  - "get"
+- apiGroups:
+  - "apps"
+  resources:
+  - "deployments"
+  resourceNames:
+  - "kube-state-metrics"
+  verbs:
+  - "get"
+  - "update"
+- apiGroups:
+  - "extensions"
+  resources:
+  - "deployments"
+  resourceNames:
+  - "kube-state-metrics"
+  verbs:
+  - "get"
+  - "update"
+
+---
+metadata:
+  name: "node-exporter"
+  labels: {}
+apiVersion: "rbac.authorization.k8s.io/v1"
+kind: "ClusterRole"
+rules:
+- apiGroups:
+  - "authentication.k8s.io"
+  resources:
+  - "tokenreviews"
+  verbs:
+  - "create"
+- apiGroups:
+  - "authorization.k8s.io"
+  resources:
+  - "subjectaccessreviews"
+  verbs:
+  - "create"
+
+---
+metadata:
+  name: "kubelet"
+  labels:
+    k8s-app: "kubelet"
+apiVersion: "monitoring.coreos.com/v1"
+kind: "ServiceMonitor"
+spec:
+  jobLabel: "k8s-app"
+  endpoints:
+  - port: "https-metrics"
+    scheme: "https"
+    interval: "30s"
+    tlsConfig:
+      insecureSkipVerify: true
+    bearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+  - port: "https-metrics"
+    scheme: "https"
+    path: "/metrics/cadvisor"
+    interval: "30s"
+    honorLabels: true
+    tlsConfig:
+      insecureSkipVerify: true
+    bearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+  selector:
+    matchLabels:
+      k8s-app: "kubelet"
+  namespaceSelector:
+    matchNames:
+    - "kube-system"
+
+---
+metadata:
+  name: "kube-state-metrics"
+  labels: {}
+apiVersion: "v1"
+kind: "ServiceAccount"
+
+---
+metadata:
+  name: "prometheus"
+  labels:
+    prometheus: "prometheus"
+    nirmata.io/application.name: "prometheus"
+    nirmata.io/application.run: "prometheus"
+    nirmata.io/component: "prometheus"
+    nirmata.io/environment.name: "nirmata-monitoring"
+apiVersion: "monitoring.coreos.com/v1"
+kind: "Prometheus"
+spec:
+  replicas: 2
+  serviceAccountName: "prometheus"
+  serviceMonitorSelector:
+    matchExpressions:
+    - key: "k8s-app"
+      operator: "Exists"
+  alerting:
+    alertmanagers:
+    - namespace: "nirmata-monitoring"
+      name: "alertmanager"
+      port: "web"
+
+---
+apiVersion: "v1"
+kind: "Service"
+metadata:
+  annotations: {}
+  name: "kube-state-metrics"
+  labels:
+    nirmata.io/service.name: "kube-state-metrics"
+    k8s-app: "kube-state-metrics"
+    nirmata.io/component: "kube-state-metrics"
+spec:
+  clusterIP: "None"
+  externalIPs: []
+  loadBalancerSourceRanges: []
+  type: "ClusterIP"
+  selector:
+    k8s-app: "kube-state-metrics"
+    nirmata.io/component: "kube-state-metrics"
+  ports:
+  - name: "http-metrics"
+    port: 8080
+    protocol: "TCP"
+    targetPort: "http-metrics"
+  - name: "telemetry"
+    port: 8081
+    protocol: "TCP"
+    targetPort: "telemetry"
+
+---
+metadata:
+  name: "kube-state-metrics"
+  labels: {}
+apiVersion: "rbac.authorization.k8s.io/v1"
+kind: "RoleBinding"
+subjects:
+- kind: "ServiceAccount"
+  name: "kube-state-metrics"
+  namespace: "nirmata-monitoring"
+roleRef:
+  apiGroup: "rbac.authorization.k8s.io"
+  kind: "Role"
+  name: "kube-state-metrics-resizer"
+
+---
+metadata:
+  name: "node-exporter"
+  labels: {}
+apiVersion: "v1"
+kind: "ServiceAccount"
+
+---
+kind: "ConfigMap"
+apiVersion: "v1"
+data:
+  dashboards.yml: "# provisioning/dashboards/all.yml\n# https://github.com/cirocosta/sample-grafana/blob/master/grafana/provisioning/dashboards/all.yml\n\
+    \n- name: 'Prometheus'       # name of this dashboard configuration (not dashboard\
+    \ itself)\n  org_id: 1             # id of the org to hold the dashboard\n  folder:\
+    \ ''            # name of the folder to put the dashboard (http://docs.grafana.org/v5.0/reference/dashboard_folders/)\n\
+    \  type: 'file'          # type of dashboard description (json files)\n  options:\n\
+    \    folder: '/var/lib/grafana/dashboards'       # where dashboards are"
+binaryData: {}
+metadata:
+  uid: "13eca248-5ff0-11e9-97b9-3e651763bfbe"
+  annotations: {}
+  name: "grafana-prov-dashboard"
+  labels:
+    nirmata.io/application.addon.type: "Monitoring"
+    nirmata.io/configmap.name: "grafana-prov-dashboard"
+    nirmata.io/application.type: "cluster-addon"
+
+---
+metadata:
+  name: "node-exporter"
+  labels: {}
+apiVersion: "rbac.authorization.k8s.io/v1"
+kind: "ClusterRoleBinding"
+subjects:
+- kind: "ServiceAccount"
+  name: "node-exporter"
+  namespace: "nirmata-monitoring"
+roleRef:
+  apiGroup: "rbac.authorization.k8s.io"
+  kind: "ClusterRole"
+  name: "node-exporter"
+
+---
+apiVersion: "v1"
+kind: "Service"
+metadata:
+  annotations: {}
+  name: "grafana"
+  labels:
+    app.kubernetes.io/name: "grafana"
+    nirmata.io/service.name: "grafana"
+    nirmata.io/application.type: "cluster-addon"
+    nirmata.io/component: "grafana"
+    nirmata.io/application.addon.type: "Monitoring"
+spec:
+  externalIPs: []
+  loadBalancerSourceRanges: []
+  type: "NodePort"
+  selector:
+    app.kubernetes.io/name: "grafana"
+    nirmata.io/component: "grafana"
+  ports:
+  - port: 3000
+    protocol: "TCP"
+    targetPort: 3000
+
+---
+metadata:
+  name: "kube-state-metrics"
+  labels:
+    k8s-app: "kube-state-metrics"
+apiVersion: "monitoring.coreos.com/v1"
+kind: "ServiceMonitor"
+spec:
+  jobLabel: "k8s-app"
+  selector:
+    matchLabels:
+      k8s-app: "kube-state-metrics"
+  namespaceSelector:
+    matchNames:
+    - "nirmata-monitoring"
+  endpoints:
+  - port: "http-metrics"
+    interval: "30s"
+  - port: "telemetry"
+    interval: "30s"
+
+---
+kind: "Deployment"
+apiVersion: "apps/v1"
+metadata:
+  uid: "11de7f33-5fd5-11e9-97b9-3e651763bfbe"
+  namespace: "nirmata-monitoring"
+  annotations:
+    deployment.kubernetes.io/revision: "15"
+  name: "grafana"
+  labels:
+    nirmata.io/deployment.name: "grafana"
+    app.kubernetes.io/name: "grafana"
+    nirmata.io/application.type: "cluster-addon"
+    nirmata.io/component: "grafana"
+    nirmata.io/application.addon.type: "Monitoring"
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: "grafana"
+      nirmata.io/component: "grafana"
+    matchExpressions: []
+  strategy:
+    type: "RollingUpdate"
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  template:
+    metadata:
+      annotations: {}
+      labels:
+        nirmata.io/deployment.name: "grafana"
+        app.kubernetes.io/name: "grafana"
+        nirmata.io/application.type: "cluster-addon"
+        nirmata.io/component: "grafana"
+        nirmata.io/application.addon.type: "Monitoring"
+    spec:
+      restartPolicy: "Always"
+      terminationGracePeriodSeconds: 30
+      nodeSelector: {}
+      schedulerName: "default-scheduler"
+      dnsPolicy: "ClusterFirst"
+      volumes:
+      - name: "data"
+        emptyDir: {}
+      - name: "prometheus-datasource"
+        configMap:
+          name: "grafana-config-map"
+          optional: false
+      - name: "prometheus-dashboards"
+        configMap:
+          name: "grafana-prov-dashboard"
+          optional: false
+      - name: "all-dashboards"
+        configMap:
+          name: "kubernetes-dashboards"
+          optional: false
+      containers:
+      - name: "grafana"
+        image: "grafana/grafana"
+        command: []
+        args: []
+        terminationMessagePath: "/dev/termination-log"
+        terminationMessagePolicy: "File"
+        imagePullPolicy: "Always"
+        ports:
+        - containerPort: 3000
+          protocol: "TCP"
+        env:
+        - name: "GF_SECURITY_ADMIN_USER"
+          value: "admin"
+        - name: "GF_SECURITY_ADMIN_PASSWORD"
+          value: "admin123"
+        volumeMounts:
+        - name: "data"
+          mountPath: "/var/lib/grafana"
+        - name: "prometheus-datasource"
+          mountPath: "/etc/grafana/provisioning/datasources"
+        - name: "prometheus-dashboards"
+          readOnly: false
+          mountPath: "/etc/grafana/provisioning/dashboards"
+        - name: "all-dashboards"
+          readOnly: false
+          mountPath: "/var/lib/grafana/dashboards"
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "2500Mi"
+          requests:
+            cpu: "100m"
+            memory: "100Mi"
+      securityContext:
+        supplementalGroups: []
+      imagePullSecrets:
+      - name: "index.docker.io"
+
+---
+kind: "ConfigMap"
+apiVersion: "v1"
+data:
+  datasource.yml: "# config file version\napiVersion: 1\n\n# list of datasources that\
+    \ should be deleted from the database\ndeleteDatasources:\n  - name: Prometheus\n\
+    \    orgId: 1\n\n# list of datasources to insert/update depending\n# whats available\
+    \ in the database\ndatasources:\n  # <string, required> name of the datasource.\
+    \ Required\n- name: Prometheus\n  # <string, required> datasource type. Required\n\
+    \  type: prometheus\n  # <string, required> access mode. direct or proxy. Required\n\
+    \  access: proxy\n  # <int> org id. will default to orgId 1 if not specified\n\
+    \  orgId: 1\n  # <string> url\n  url: http://prometheus-operated:9090\n  # <string>\
+    \ database password, if used\n  password:\n  # <string> database user, if used\n\
+    \  user:\n  # <string> database name, if used\n  database:\n  # <bool> enable/disable\
+    \ basic auth\n  basicAuth: false\n  # <string> basic auth username\n  basicAuthUser:\n\
+    \  # <string> basic auth password\n  basicAuthPassword:\n  # <bool> enable/disable\
+    \ with credentials headers\n  withCredentials:\n  # <bool> mark as default datasource.\
+    \ Max one per org\n  isDefault: true\n  # <map> fields that will be converted\
+    \ to json and stored in json_data\n  jsonData:\n     graphiteVersion: \"1.1\"\n\
+    \     tlsAuth: false\n     tlsAuthWithCACert: false\n  # <string> json object\
+    \ of data that will be encrypted.\n  secureJsonData:\n    tlsCACert: \"...\"\n\
+    \    tlsClientCert: \"...\"\n    tlsClientKey: \"...\"\n  version: 1\n  # <bool>\
+    \ allow users to edit datasources from the UI.\n  editable: true"
+binaryData: {}
+metadata:
+  uid: "d7e500f0-5fe9-11e9-97b9-3e651763bfbe"
+  annotations: {}
+  name: "grafana-config-map"
+  labels:
+    nirmata.io/application.addon.type: "Monitoring"
+    nirmata.io/configmap.name: "grafana-config-map"
+    nirmata.io/application.type: "cluster-addon"
+
+---
+metadata:
+  name: "prometheus"
+  labels: {}
+apiVersion: "v1"
+kind: "ServiceAccount"
+
+---
+metadata:
+  name: "kube-state-metrics"
+  labels: {}
+apiVersion: "rbac.authorization.k8s.io/v1"
+kind: "ClusterRoleBinding"
+subjects:
+- kind: "ServiceAccount"
+  name: "kube-state-metrics"
+  namespace: "nirmata-monitoring"
+roleRef:
+  apiGroup: "rbac.authorization.k8s.io"
+  kind: "ClusterRole"
+  name: "kube-state-metrics"
