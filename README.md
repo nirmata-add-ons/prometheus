@@ -14,7 +14,7 @@ Prometheus is an open-source system monitoring and alerting toolkit
 5. Create clusters using the cluster type.
 6. If the addon is to be added to a running cluster, create an environment with the name "**nirmata-monitoring**" and choose this environment while deploying the application
 7. Verify that the application is running in Nirmata. 
-8. Access the Grafana dashboard on the exposed port, the deployment will hold the credentials to access the application.
+8. Access the Grafana dashboard on the exposed port, the deployment holds the credentials to access the application.
 
 ### Who do I talk to?
 For issues, contact support@nirmata.com
