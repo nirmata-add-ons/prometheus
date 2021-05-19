@@ -17,9 +17,10 @@ Prometheus is an open-source system monitoring and alerting toolkit
 8. Access the Grafana dashboard on the exposed port, the deployment holds the credentials to access the application.
 
 ### Validated Nirmata and Kubernetes versions
-Nirmata Cloud Edition
 
-Kuvernetes Versions
+Prometheus Version - 
+Nirmata Version - Cloud Edition - 
+Kuvernetes Version - 
 
 ### Who do I talk to?
 For issues, contact support@nirmata.com
