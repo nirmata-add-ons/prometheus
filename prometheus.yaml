@@ -1,4 +1,220 @@
 ---
+# Source: prometheus-operator/templates/prometheus-operator/clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-operator
+  labels:
+    app: prometheus-operator
+    
+    chart: prometheus-operator-9.3.0
+    release: "prometheus"
+    heritage: "Helm"
+rules:
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - '*'
+- apiGroups:
+  - monitoring.coreos.com
+  resources:
+  - alertmanagers
+  - prometheuses
+  - thanosrulers
+  - prometheuses/finalizers
+  - alertmanagers/finalizers
+  - thanosrulers/finalizers
+  - servicemonitors
+  - podmonitors
+  - prometheusrules
+  - podmonitors
+  verbs:
+  - '*'
+- apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  verbs:
+  - '*'
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - secrets
+  verbs:
+  - '*'
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - list
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - services
+  - services/finalizers
+  - endpoints
+  verbs:
+  - get
+  - create
+  - update
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+---
+# Source: prometheus-operator/templates/prometheus-operator/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-operator
+  labels:
+    app: prometheus-operator
+    
+    chart: prometheus-operator-9.3.0
+    release: "prometheus"
+    heritage: "Helm"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus-operator
+subjects:
+- kind: ServiceAccount
+  name: prometheus-operator
+  namespace: nirmata-monitoring
+---
+# Source: prometheus-operator/templates/prometheus-operator/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-operator
+  namespace: nirmata-monitoring
+  labels:
+    app: prometheus-operator
+    
+    chart: prometheus-operator-9.3.0
+    release: "prometheus"
+    heritage: "Helm"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus-operator
+      release: "prometheus"
+  template:
+    metadata:
+      labels:
+        app: prometheus-operator
+        
+        chart: prometheus-operator-9.3.0
+        release: "prometheus"
+        heritage: "Helm"
+    spec:
+      containers:
+        - name: prometheus
+          image: "quay.io/coreos/prometheus-operator:v0.38.1"
+          imagePullPolicy: "IfNotPresent"
+          args:
+            - --manage-crds=true
+            - --kubelet-service=kube-system/prometheus-kubelet
+            - --logtostderr=true
+            - --localhost=127.0.0.1
+            - --prometheus-config-reloader=quay.io/coreos/prometheus-config-reloader:v0.38.1
+            - --config-reloader-image=docker.io/jimmidyson/configmap-reload:v0.3.0
+            - --config-reloader-cpu=100m
+            - --config-reloader-memory=25Mi
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            {}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+      securityContext:
+        fsGroup: 65534
+        runAsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+      serviceAccountName: prometheus-operator
+---
+# Source: prometheus-operator/templates/prometheus-operator/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-operator
+  namespace: nirmata-monitoring
+  labels:
+    app: prometheus-operator
+    
+    chart: prometheus-operator-9.3.0
+    release: "prometheus"
+    heritage: "Helm"
+spec:
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+  selector:
+    app: prometheus-operator
+    release: "prometheus"
+  type: "ClusterIP"
+---
+# Source: prometheus-operator/templates/prometheus-operator/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-operator
+  namespace: nirmata-monitoring
+  labels:
+    app: prometheus-operator
+    
+    chart: prometheus-operator-9.3.0
+    release: "prometheus"
+    heritage: "Helm"
+imagePullSecrets:
+  - name: docker-secret
+---
+# Source: prometheus-operator/templates/prometheus-operator/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: prometheus-operator
+  namespace: nirmata-monitoring
+  labels:
+    app: prometheus-operator
+    
+    chart: prometheus-operator-9.3.0
+    release: "prometheus"
+    heritage: "Helm"
+spec:
+  endpoints:
+  - port: http
+    honorLabels: true
+  selector:
+    matchLabels:
+      app: prometheus-operator
+      release: "prometheus"
+  namespaceSelector:
+    matchNames:
+      - "nirmata-monitoring"
+---
 metadata:
   name: "node-exporter"
   labels:
